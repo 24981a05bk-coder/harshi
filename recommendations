@@ -1,0 +1,202 @@
+import React, { useState } from "react";
+import { base44 } from "@/api/base44Client";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
+import { createPageUrl } from "@/utils";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Loader2, Sparkles, ArrowLeft } from "lucide-react";
+import { motion } from "framer-motion";
+
+export default function NewRecommendation() {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const [selectedField, setSelectedField] = useState("");
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [recommendation, setRecommendation] = useState(null);
+
+  const { data: fields } = useQuery({
+    queryKey: ['fields'],
+    queryFn: () => base44.entities.Field.list(),
+    initialData: [],
+  });
+
+  const createMutation = useMutation({
+    mutationFn: (data) => base44.entities.Recommendation.create(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['recommendations'] });
+      navigate(createPageUrl("Reports"));
+    },
+  });
+
+  const handleGenerate = async () => {
+    if (!selectedField) return;
+
+    const field = fields.find(f => f.id === selectedField);
+    if (!field) return;
+
+    setIsGenerating(true);
+
+    try {
+      const result = await base44.integrations.Core.InvokeLLM({
+        prompt: `Generate a detailed fertilizer recommendation for a ${field.crop_type} field of ${field.area_acres} acres with ${field.soil_health} soil health. Include:
+        - Specific fertilizer type (NPK ratio)
+        - Quantity in kilograms
+        - Application timing
+        - Expected yield increase percentage (realistic estimate)
+        - Cost estimate in USD
+        - Detailed notes on application method and precautions`,
+        response_json_schema: {
+          type: "object",
+          properties: {
+            fertilizer_type: { type: "string" },
+            quantity_kg: { type: "number" },
+            application_date: { type: "string" },
+            expected_yield_increase: { type: "number" },
+            cost_estimate: { type: "number" },
+            notes: { type: "string" }
+          }
+        }
+      });
+
+      setRecommendation({
+        ...result,
+        field_id: field.id,
+        field_name: field.name,
+        crop_type: field.crop_type
+      });
+    } catch (error) {
+      console.error("Error generating recommendation:", error);
+    }
+
+    setIsGenerating(false);
+  };
+
+  const handleSave = () => {
+    if (recommendation) {
+      createMutation.mutate(recommendation);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-50 py-8">
+      <div className="container mx-auto px-4 max-w-3xl">
+        <Button
+          variant="ghost"
+          onClick={() => navigate(createPageUrl("Dashboard"))}
+          className="mb-6"
+        >
+          <ArrowLeft className="w-4 h-4 mr-2" />
+          Back to Dashboard
+        </Button>
+
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+        >
+          <Card className="shadow-lg border-none">
+            <CardHeader>
+              <CardTitle className="text-3xl flex items-center gap-3">
+                <Sparkles className="w-8 h-8 text-green-600" />
+                Get AI Fertilizer Recommendation
+              </CardTitle>
+              <p className="text-gray-600 mt-2">
+                Select a field to get personalized fertilizer recommendations powered by AI
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div>
+                <Label htmlFor="field">Select Field</Label>
+                <Select value={selectedField} onValueChange={setSelectedField}>
+                  <SelectTrigger className="mt-2">
+                    <SelectValue placeholder="Choose a field..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {fields.length === 0 ? (
+                      <div className="p-4 text-sm text-gray-600">
+                        No fields found. Please add a field first.
+                      </div>
+                    ) : (
+                      fields.map((field) => (
+                        <SelectItem key={field.id} value={field.id}>
+                          {field.name} - {field.crop_type} ({field.area_acres} acres)
+                        </SelectItem>
+                      ))
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <Button
+                onClick={handleGenerate}
+                disabled={!selectedField || isGenerating}
+                className="w-full bg-green-600 hover:bg-green-700 py-6 text-lg"
+              >
+                {isGenerating ? (
+                  <>
+                    <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                    Generating Recommendation...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-5 h-5 mr-2" />
+                    Generate Recommendation
+                  </>
+                )}
+              </Button>
+
+              {recommendation && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  className="bg-green-50 border-2 border-green-200 rounded-xl p-6 space-y-4"
+                >
+                  <h3 className="text-xl font-bold text-green-900 mb-4">
+                    Recommendation for {recommendation.field_name}
+                  </h3>
+
+                  <div className="grid md:grid-cols-2 gap-4">
+                    <div className="bg-white p-4 rounded-lg">
+                      <div className="text-sm text-gray-600">Fertilizer Type</div>
+                      <div className="text-lg font-semibold text-gray-900">{recommendation.fertilizer_type}</div>
+                    </div>
+
+                    <div className="bg-white p-4 rounded-lg">
+                      <div className="text-sm text-gray-600">Quantity</div>
+                      <div className="text-lg font-semibold text-gray-900">{recommendation.quantity_kg} kg</div>
+                    </div>
+
+                    <div className="bg-white p-4 rounded-lg">
+                      <div className="text-sm text-gray-600">Expected Yield Increase</div>
+                      <div className="text-lg font-semibold text-green-600">+{recommendation.expected_yield_increase}%</div>
+                    </div>
+
+                    <div className="bg-white p-4 rounded-lg">
+                      <div className="text-sm text-gray-600">Estimated Cost</div>
+                      <div className="text-lg font-semibold text-gray-900">${recommendation.cost_estimate}</div>
+                    </div>
+                  </div>
+
+                  <div className="bg-white p-4 rounded-lg">
+                    <div className="text-sm text-gray-600 mb-2">Application Notes</div>
+                    <div className="text-gray-700">{recommendation.notes}</div>
+                  </div>
+
+                  <Button
+                    onClick={handleSave}
+                    disabled={createMutation.isPending}
+                    className="w-full bg-green-600 hover:bg-green-700"
+                  >
+                    Save Recommendation
+                  </Button>
+                </motion.div>
+              )}
+            </CardContent>
+          </Card>
+        </motion.div>
+      </div>
+    </div>
+  );
+}
